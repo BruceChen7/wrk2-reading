@@ -18,6 +18,7 @@
 #include "hdr_histogram.h"
 
 #define VERSION  "4.0.0"
+// 8K
 #define RECVBUF  8192
 #define SAMPLES  100000000
 
@@ -69,8 +70,8 @@ typedef struct connection {
     uint64_t thread_start;
     uint64_t start;
     char *request;
-    size_t length;
-    size_t written;
+    size_t length; // request长度
+    size_t written;  // 已经写入的长度
     uint64_t pending;
     buffer headers;
     buffer body;

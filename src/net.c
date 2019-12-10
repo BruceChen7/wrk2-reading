@@ -20,6 +20,7 @@ status sock_read(connection *c, size_t *n) {
     return r >= 0 ? OK : ERROR;
 }
 
+// 直接写入至多len的字节数
 status sock_write(connection *c, char *buf, size_t len, size_t *n) {
     ssize_t r;
     if ((r = write(c->fd, buf, len)) == -1) {

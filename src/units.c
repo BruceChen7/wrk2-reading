@@ -45,13 +45,17 @@ static char *format_units(long double n, units *m, int p) {
 
     scale = m->scale * 0.85;
 
+    // 计算出合理的表示
     for (int i = 0; m->units[i+1] && amt >= scale; i++) {
         amt /= m->scale;
         unit = m->units[i];
     }
 
+    // 格式化消息，
+    // 这里msg指向了realloc的地址
     aprintf(&msg, "%.*Lf%s", p, amt, unit);
 
+    // 注意msg指向了realloc的地址
     return msg;
 }
 

@@ -27,7 +27,7 @@
 // ##     ##    ##     ##  ##        ##     ##       ##
 //  #######     ##    #### ######## ####    ##       ##
 
-
+// base 的 exp次幂
 static int64_t power(int64_t base, int64_t exp)
 {
     int result = 1;

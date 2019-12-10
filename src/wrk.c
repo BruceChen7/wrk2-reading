@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
 
     pthread_mutex_init(&statistics.mutex, NULL);
     statistics.requests = stats_alloc(10);
-    // 初始化线程
+    // 初始化线程池
     thread *threads = zcalloc(cfg.threads * sizeof(thread));
 
     hdr_init(1, MAX_LATENCY, 3, &(statistics.requests->histogram));
@@ -125,12 +125,14 @@ int main(int argc, char **argv) {
 
     // 每个线程分配的链接数
     uint64_t connections = cfg.connections / cfg.threads;
+    // 每个线程的吞吐量
     double throughput    = (double)cfg.rate / cfg.threads;
-    //
+    // 粒度是微妙
     uint64_t stop_at     = time_us() + (cfg.duration * 1000000);
 
     for (uint64_t i = 0; i < cfg.threads; i++) {
         thread *t = &threads[i];
+        // 初始化每个线程
         // 每个线程进行IOLoop
         t->loop        = aeCreateEventLoop(10 + cfg.connections * 3);
         t->connections = connections;
@@ -157,6 +159,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    // 捕获SIGINT，使用
     struct sigaction sa = {
         .sa_handler = handler,
         .sa_flags   = 0,
@@ -178,14 +181,17 @@ int main(int argc, char **argv) {
     hdr_init(1, MAX_LATENCY, 3, &latency_histogram);
 
     struct hdr_histogram* u_latency_histogram;
+
     // 记录延迟直方图
     hdr_init(1, MAX_LATENCY, 3, &u_latency_histogram);
 
+    // 等待每个线程结束
     for (uint64_t i = 0; i < cfg.threads; i++) {
         thread *t = &threads[i];
         pthread_join(t->thread, NULL);
     }
 
+    // 计算运行时间
     uint64_t runtime_us = time_us() - start;
 
     for (uint64_t i = 0; i < cfg.threads; i++) {
@@ -206,7 +212,9 @@ int main(int argc, char **argv) {
     }
 
     long double runtime_s   = runtime_us / 1000000.0;
+    // 查看qps
     long double req_per_s   = complete   / runtime_s;
+    // 计算tps
     long double bytes_per_s = bytes      / runtime_s;
 
     stats *latency_stats = stats_alloc(10);
@@ -214,12 +222,16 @@ int main(int argc, char **argv) {
     latency_stats->max = hdr_max(latency_histogram);
     latency_stats->histogram = latency_histogram;
 
+    // 打印统计头
     print_stats_header();
-    print_stats("Latency", latency_stats, format_time_us);
+    // 打印延迟统计ºw
+    print_stats("Latency", latency_stats, format_time_ush);
+    // 打印qps
     print_stats("Req/Sec", statistics.requests, format_metric);
 //    if (cfg.latency) print_stats_latency(latency_stats);
 
     if (cfg.latency) {
+        // 延迟分布
         print_hdr_latency(latency_histogram,
                 "Recorded Latency");
         printf("----------------------------------------------------------\n");
@@ -245,7 +257,9 @@ int main(int argc, char **argv) {
         printf("  Non-2xx or 3xx responses: %d\n", errors.status);
     }
 
+    // 计算qps
     printf("Requests/sec: %9.2Lf\n", req_per_s);
+    // 吞吐量
     printf("Transfer/sec: %10sB\n", format_binary(bytes_per_s));
 
     if (script_has_done(L)) {
@@ -264,7 +278,7 @@ void *thread_main(void *arg) {
     // 创建每个connection的上下文
     thread->cs = zcalloc(thread->connections * sizeof(connection));
     tinymt64_init(&thread->rand, time_us());
-    // 出事每个线程测量的直方图
+    // 初始化每个线程测量的直方图
     hdr_init(1, MAX_LATENCY, 3, &thread->latency_histogram);
     hdr_init(1, MAX_LATENCY, 3, &thread->u_latency_histogram);
 
@@ -272,6 +286,7 @@ void *thread_main(void *arg) {
     size_t length = 0;
 
     if (!cfg.dynamic) {
+        // request是动态产生的内容
         script_request(thread->L, &request, &length);
     }
 
@@ -279,6 +294,7 @@ void *thread_main(void *arg) {
 
     connection *c = thread->cs;
 
+    // 初始化每个connnection的上下文
     for (uint64_t i = 0; i < thread->connections; i++, c++) {
         c->thread     = thread;
         c->ssl        = cfg.ctx ? SSL_new(cfg.ctx) : NULL;
@@ -297,6 +313,7 @@ void *thread_main(void *arg) {
     uint64_t timeout_delay = TIMEOUT_INTERVAL_MS + (thread->connections * 5);
 
     aeCreateTimeEvent(loop, calibrate_delay, calibrate, thread, NULL);
+    // 创建超时时间
     aeCreateTimeEvent(loop, timeout_delay, check_timeouts, thread, NULL);
 
     thread->start = time_us();
@@ -309,11 +326,13 @@ void *thread_main(void *arg) {
     return NULL;
 }
 
+// 连接服务器
 static int connect_socket(thread *thread, connection *c) {
     struct addrinfo *addr = thread->addr;
     struct aeEventLoop *loop = thread->loop;
     int fd, flags;
 
+    // 直接连接服务器
     fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
 
     // 设置成non block
@@ -330,6 +349,7 @@ static int connect_socket(thread *thread, connection *c) {
 
     c->latest_connect = time_us();
 
+    // 监听读写事件
     flags = AE_READABLE | AE_WRITABLE;
     if (aeCreateFileEvent(loop, fd, flags, socket_connected, c) == AE_OK) {
         c->parser.data = c;
@@ -352,7 +372,7 @@ static int reconnect_socket(thread *thread, connection *c) {
 
 static int delayed_initial_connect(aeEventLoop *loop, long long id, void *data) {
     connection* c = data;
-    // 线程开始的启动时间
+    // 线程开始的启动时间, 微米秒数
     c->thread_start = time_us();
     connect_socket(c->thread, c);
     return AE_NOMORE;
@@ -371,6 +391,7 @@ static int calibrate(aeEventLoop *loop, long long id, void *data) {
 
     if (mean == 0) return CALIBRATE_DELAY_MS;
 
+    // 每个线程的平均值
     thread->mean     = (uint64_t) mean;
     hdr_reset(thread->latency_histogram);
     hdr_reset(thread->u_latency_histogram);
@@ -389,6 +410,7 @@ static int calibrate(aeEventLoop *loop, long long id, void *data) {
     return AE_NOMORE;
 }
 
+// 检查每个线程的超时时间
 static int check_timeouts(aeEventLoop *loop, long long id, void *data) {
     thread *thread = data;
     connection *c  = thread->cs;
@@ -456,6 +478,7 @@ static int response_body(http_parser *parser, const char *at, size_t len) {
 static uint64_t usec_to_next_send(connection *c) {
     uint64_t now = time_us();
 
+    // 计算该链接下一次启动的时间
     uint64_t next_start_time = c->thread_start + (c->complete / c->throughput);
 
     bool send_now = true;
@@ -593,20 +616,26 @@ static int response_complete(http_parser *parser) {
     return 0;
 }
 
+// 连接成功后
 static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
     connection *c = data;
 
+    // 直接
     switch (sock.connect(c, cfg.host)) {
         case OK:    break;
         case ERROR: goto error;
         case RETRY: return;
     }
 
+    // 初始化parser
     http_parser_init(&c->parser, HTTP_RESPONSE);
+    // 客户端没有写任何数据
     c->written = 0;
 
+    // 从server处监听读写事件
     aeCreateFileEvent(c->thread->loop, fd, AE_READABLE, socket_readable, c);
 
+    // 因为一开始就是可写的，那么直接处理writable事件
     aeCreateFileEvent(c->thread->loop, fd, AE_WRITABLE, socket_writeable, c);
 
     return;
@@ -617,13 +646,16 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
 
 }
 
+// 开始发送数据
 static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     connection *c = data;
     thread *thread = c->thread;
 
     if (!c->written) {
+        // 如果返回的不是0, 表示要延迟这次请求
         uint64_t time_usec_to_wait = usec_to_next_send(c);
         if (time_usec_to_wait) {
+            // 大概等待时间
             int msec_to_wait = round((time_usec_to_wait / 1000.0L) + 0.5);
 
             // Not yet time to send. Delay:
@@ -632,6 +664,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
                     thread->loop, msec_to_wait, delay_request, c, NULL);
             return;
         }
+        // 这次写的时间
         c->latest_write = time_us();
     }
 
@@ -639,11 +672,13 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
         script_request(thread->L, &c->request, &c->length);
     }
 
+    // 查看目前请求的buffer
     char  *buf = c->request + c->written;
     size_t len = c->length  - c->written;
     size_t n;
 
     if (!c->written) {
+        // 开始写入
         c->start = time_us();
         if (!c->has_pending) {
             c->actual_latency_start = c->start;
@@ -653,6 +688,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
         c->pending = cfg.pipeline;
     }
 
+    // 开始写入请求
     switch (sock.write(c, buf, len, &n)) {
         case OK:    break;
         case ERROR: goto error;
@@ -660,6 +696,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
     }
 
     c->written += n;
+    // 写完了，那么删除关注的writable事件
     if (c->written == c->length) {
         c->written = 0;
         aeDeleteFileEvent(loop, fd, AE_WRITABLE);
@@ -686,7 +723,7 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
 
         if (http_parser_execute(&c->parser, &parser_settings, c->buf, n) != n) goto error;
         c->thread->bytes += n;
-    } while (n == RECVBUF && sock.readable(c) > 0);
+    } while (n == RECVBUF && sock.readable(c) > 0);  // 一直读读到缓冲区都接受到了
 
     return;
 
@@ -843,8 +880,10 @@ static void print_stats(char *name, stats *stats, char *(*fmt)(long double)) {
 }
 
 static void print_hdr_latency(struct hdr_histogram* histogram, const char* description) {
+    // 百分比分布
     long double percentiles[] = { 50.0, 75.0, 90.0, 99.0, 99.9, 99.99, 99.999, 100.0};
     printf("  Latency Distribution (HdrHistogram - %s)\n", description);
+    // 计算每个概率的延迟分布
     for (size_t i = 0; i < sizeof(percentiles) / sizeof(long double); i++) {
         long double p = percentiles[i];
         int64_t n = hdr_value_at_percentile(histogram, p);
@@ -852,6 +891,7 @@ static void print_hdr_latency(struct hdr_histogram* histogram, const char* descr
         print_units(n, format_time_us, 10);
         printf("\n");
     }
+    // 详细的概率分布
     printf("\n%s\n", "  Detailed Percentile spectrum:");
     hdr_percentiles_print(histogram, stdout, 5, 1000.0, CLASSIC);
 }
