@@ -46,13 +46,19 @@ static const struct luaL_reg threadlib[] = {
 };
 
 lua_State *script_create(char *file, char *url, char **headers) {
+    // 新建一个栈
     lua_State *L = luaL_newstate();
+    // 打开lua的库
     luaL_openlibs(L);
+    // 打开wrk.lua文件
     (void) luaL_dostring(L, "wrk = require \"wrk\"");
 
+    // 新建一个原表
     luaL_newmetatable(L, "wrk.addr");
+    // 注册addr中的库
     luaL_register(L, NULL, addrlib);
     luaL_newmetatable(L, "wrk.stats");
+    // 注册statslib中的库
     luaL_register(L, NULL, statslib);
     luaL_newmetatable(L, "wrk.thread");
     luaL_register(L, NULL, threadlib);

@@ -301,7 +301,9 @@ void *thread_main(void *arg) {
         c->request    = request;
         c->length     = length;
         c->throughput = throughput;
+        // 按2倍的速度来赶
         c->catch_up_throughput = throughput * 2;
+        // 该连接完成的请求数
         c->complete   = 0;
         c->caught_up  = true;
         // Stagger connects 5 msec apart within thread:
@@ -316,6 +318,7 @@ void *thread_main(void *arg) {
     // 创建超时时间
     aeCreateTimeEvent(loop, timeout_delay, check_timeouts, thread, NULL);
 
+    // 线程开始的时间
     thread->start = time_us();
     // 等待每个任务的完成
     aeMain(loop);
@@ -352,6 +355,7 @@ static int connect_socket(thread *thread, connection *c) {
     // 监听读写事件
     flags = AE_READABLE | AE_WRITABLE;
     if (aeCreateFileEvent(loop, fd, flags, socket_connected, c) == AE_OK) {
+        // 将connection赋值到data中
         c->parser.data = c;
         c->fd = fd;
         return fd;
@@ -372,7 +376,7 @@ static int reconnect_socket(thread *thread, connection *c) {
 
 static int delayed_initial_connect(aeEventLoop *loop, long long id, void *data) {
     connection* c = data;
-    // 线程开始的启动时间, 微米秒数
+    // 该连接线程开始的启动时间, 微米秒数
     c->thread_start = time_us();
     connect_socket(c->thread, c);
     return AE_NOMORE;
@@ -478,21 +482,25 @@ static int response_body(http_parser *parser, const char *at, size_t len) {
 static uint64_t usec_to_next_send(connection *c) {
     uint64_t now = time_us();
 
-    // 计算该链接下一次启动的时间
+    // 计算该连接理论上下一次启动的时间
     uint64_t next_start_time = c->thread_start + (c->complete / c->throughput);
 
     bool send_now = true;
 
+    // 如果步掉跟的上，那么不是现在写
     if (next_start_time > now) {
         // We are on pace. Indicate caught_up and don't send now.
         c->caught_up = true;
         send_now = false;
     } else {
         // We are behind
+        // 上一次我们能够赶上
         if (c->caught_up) {
             // This is the first fall-behind since we were last caught up
             c->caught_up = false;
+            // 开始赶的时间是现在
             c->catch_up_start_time = now;
+            // 开始赶的完成数保留下来
             c->complete_at_catch_up_start = c->complete;
         }
 
@@ -500,6 +508,7 @@ static uint64_t usec_to_next_send(connection *c) {
         uint64_t complete_since_catch_up_start =
                 c->complete - c->complete_at_catch_up_start;
 
+        // 为了赶上原来的请求频率，计算下次需要发起请求的时间
         next_start_time = c->catch_up_start_time +
                 (complete_since_catch_up_start / c->catch_up_throughput);
 
@@ -533,6 +542,7 @@ static int response_complete(http_parser *parser) {
     uint64_t now = time_us();
     int status = parser->status_code;
 
+    // 线程完成请求数+1
     thread->complete++;
     thread->requests++;
 
@@ -552,6 +562,7 @@ static int response_complete(http_parser *parser) {
     }
 
     // Count all responses (including pipelined ones:)
+    // 该connection完成了一个请求，请求数 + 1
     c->complete++;
 
     // Note that expected start time is computed based on the completed
@@ -561,8 +572,11 @@ static int response_complete(http_parser *parser) {
     // start time based on the completion count of these individual pipelined
     // requests we can easily end up "gifting" them time and seeing
     // negative latencies.
+    //
+    // c->thread_start 表示该连接开始的时间
     uint64_t expected_latency_start = c->thread_start +
             (c->complete_at_last_batch_start / c->throughput);
+        next_start_time = c->catch_up_start_time +
 
     int64_t expected_latency_timing = now - expected_latency_start;
 
@@ -598,8 +612,9 @@ static int response_complete(http_parser *parser) {
 
     // Record if needed, either last in batch or all, depending in cfg:
     if (cfg.record_all_responses || !c->has_pending) {
+        // 理论上应该的延迟分布
         hdr_record_value(thread->latency_histogram, expected_latency_timing);
-
+        // 实际花费时间
         uint64_t actual_latency_timing = now - c->actual_latency_start;
         hdr_record_value(thread->u_latency_histogram, actual_latency_timing);
     }
@@ -627,12 +642,12 @@ static void socket_connected(aeEventLoop *loop, int fd, void *data, int mask) {
         case RETRY: return;
     }
 
-    // 初始化parser
+    // 初始化 http parser
     http_parser_init(&c->parser, HTTP_RESPONSE);
     // 客户端没有写任何数据
     c->written = 0;
 
-    // 从server处监听读写事件
+    // 从server处监听读事件
     aeCreateFileEvent(c->thread->loop, fd, AE_READABLE, socket_readable, c);
 
     // 因为一开始就是可写的，那么直接处理writable事件
@@ -681,6 +696,7 @@ static void socket_writeable(aeEventLoop *loop, int fd, void *data, int mask) {
         // 开始写入
         c->start = time_us();
         if (!c->has_pending) {
+            // 实际开始时间
             c->actual_latency_start = c->start;
             c->complete_at_last_batch_start = c->complete;
             c->has_pending = true;
@@ -721,6 +737,7 @@ static void socket_readable(aeEventLoop *loop, int fd, void *data, int mask) {
             case RETRY: return;
         }
 
+        // 执行http 解析
         if (http_parser_execute(&c->parser, &parser_settings, c->buf, n) != n) goto error;
         c->thread->bytes += n;
     } while (n == RECVBUF && sock.readable(c) > 0);  // 一直读读到缓冲区都接受到了

@@ -33,6 +33,7 @@ typedef struct {
     uint64_t connections;
     int interval;
     uint64_t stop_at;
+    // 每个线程完成的请求数
     uint64_t complete;
     uint64_t requests;
     uint64_t bytes;
@@ -67,7 +68,7 @@ typedef struct connection {
     uint64_t complete_at_last_batch_start;
     uint64_t catch_up_start_time;
     uint64_t complete_at_catch_up_start;
-    uint64_t thread_start;
+    uint64_t thread_start; // 连接在线程中真正开始的时间
     uint64_t start;
     char *request;
     size_t length; // request长度
