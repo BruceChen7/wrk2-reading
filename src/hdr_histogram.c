@@ -40,6 +40,8 @@ static int64_t power(int64_t base, int64_t exp)
 
 static int32_t get_bucket_index(struct hdr_histogram* h, int64_t value)
 {
+    // __builtin_clzll
+    // returns the number of leading 0-bits in x, starting at the most significant bit position
     int32_t pow2ceiling = 64 - __builtin_clzll(value | h->sub_bucket_mask); // smallest power of 2 containing value
     return pow2ceiling - h->unit_magnitude - (h->sub_bucket_half_count_magnitude + 1);
 }
@@ -66,9 +68,12 @@ static int32_t counts_index(struct hdr_histogram* h, int32_t bucket_index, int32
 
 static int32_t counts_index_for(struct hdr_histogram* h, int64_t value)
 {
+    // 获取bucket index
     int32_t bucket_index     = get_bucket_index(h, value);
+    // 获取sub bucket index
     int32_t sub_bucket_index = get_sub_bucket_index(value, bucket_index, h->unit_magnitude);
 
+    // 计算索引
     return counts_index(h, bucket_index, sub_bucket_index);
 }
 
@@ -135,12 +140,17 @@ int hdr_init(
         return EINVAL;
     }
 
+    // 2 * 10 ^ 5
     int64_t largest_value_with_single_unit_resolution = 2 * power(10, significant_figures);
+
+    // ceil用来向下取整
     int32_t sub_bucket_count_magnitude                = (int32_t) ceil(log(largest_value_with_single_unit_resolution) / log(2));
     int32_t sub_bucket_half_count_magnitude           = ((sub_bucket_count_magnitude > 1) ? sub_bucket_count_magnitude : 1) - 1;
 
+    // 以2位底，取对数
     int32_t unit_magnitude = (int32_t) floor(log(lowest_trackable_value) / log(2));
 
+    // 一半
     int32_t sub_bucket_count      = (int32_t) pow(2, (sub_bucket_half_count_magnitude + 1));
     int32_t sub_bucket_half_count = sub_bucket_count / 2;
     int32_t sub_bucket_mask       = (sub_bucket_count - 1) << unit_magnitude;
@@ -148,6 +158,8 @@ int hdr_init(
     // determine exponent range needed to support the trackable value with no overflow:
     int64_t trackable_value = (int64_t) sub_bucket_mask;
     int32_t buckets_needed  = 1;
+
+    //
     while (trackable_value < highest_trackable_value)
     {
         trackable_value <<= 1;
@@ -222,6 +234,7 @@ bool hdr_record_value(struct hdr_histogram* h, int64_t value)
     }
 
     h->counts[counts_index]++;
+    // 整体的数量 + 1
     h->total_count++;
 
     return true;
@@ -229,6 +242,7 @@ bool hdr_record_value(struct hdr_histogram* h, int64_t value)
 
 bool hdr_record_values(struct hdr_histogram* h, int64_t value, int64_t count)
 {
+    // 计算到
     int32_t counts_index = counts_index_for(h, value);
 
     if (counts_index < 0 || h->counts_len <= counts_index)

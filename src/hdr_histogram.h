@@ -20,6 +20,7 @@
 
 struct hdr_histogram
 {
+    // 最小值
     int64_t lowest_trackable_value;
     int64_t highest_trackable_value;
     int64_t unit_magnitude;
